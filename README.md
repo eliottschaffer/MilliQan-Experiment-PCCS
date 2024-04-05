@@ -6,6 +6,12 @@ The LV dist board can power up to 80 channels and selectively send pulses to eac
 
 The system uses SPI for communication from Raspberry Pi to the Blades. The messages will be detailed below but are a short byte sequence of which channels should be turned on and their respective voltages. The board also uses $I^2C$ communication for all integrated circuit chips on the board. This includes the light sensor ADC, the DAC voltage control on the bases, and a potentiometer. 
 
+# Usage
+
+The system is designed to take in formatted 
+
+
+
 # First Time Setup, Raspberry Pi
 
 ## Flashing
