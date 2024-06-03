@@ -16,23 +16,36 @@ The system is designed to take in formatted
 
 ## Flashing
 The easiest way to get started with a Raspberry Pi is to use the [Raspberry Pi imager](https://www.raspberrypi.com/software/) to get the software onto the microsd card.
-The standard latest 64 bit version of Raspberry Pi OS can be used. For ease of setup, especially headless ones, define all settings in the bottom right gear icon.
-![img.png](Images/img.png)
+The standard latest 64 bit version of Raspberry Pi OS can be used. Choose the device used, in the case the Raspberry Pi 5. For ease of setup, especially headless ones, 
+we define all settings before flashing. This is done by clicking next.
+![img.png](Images/RPI_Flasher_Main.png)
 
-![img_1.png](Images/img_1.png)
+And then choosing set the settings by clicking edit settings.
 
-Make sure to enable SSH for headless setup. If a screen will be used, it can be enabled through the GUI.
+
+![img.png](Images/RPI_Flasher_Edit_Setting.png)
+
+Input the hosstname for the Raspberry Pi. For consistency "raspberrypi" will be used but anything can be used.
+Enter the username and password for the Raspberry Pi and set the Network settings.
+
+![RPI_Flasher_Options.png](Images%2FRPI_Flasher_Options.png)
+
+Then click services and enable SSH 
+![img_1.png](Images/RPI_Flasher_SSH.png)
+
+If a screen will be used, it can be enabled through the GUI.
 Same for the internet settings. It should be done here onto a network you are sure you can connect to if headless but can be done later otherwise.
 
 
 ## Get Connected
-After the flashing has finished. Plug in the microsd into the slot on the raspberry Pi.
+After the flashing has finished. Plug in the microsd into the slot on the Raspberry Pi and plug it in using a power supply.
 To connect to the Raspberry Pi, either use [Putty](https://www.putty.org/) with the hostname that was defined in the imaging setting like so:
 
-![img_2.png](Images/img_2.png)
+![img_2.png](Images/SSH_PuTTY.png)
 
-And click open or just click on the terminal icon from the raspberry pi desktop in the top left. This will put you into
-the terminal where you can continue the guide exactly as if you had the Pi connected to a keyboard.
+And click "Open" or just click on the terminal icon from the raspberry pi desktop in the top left. This will put you into
+the terminal where you will have to login using the username and password that was defined in flashing. ![img.png](Images/Login.png)
+Once logged in you can continue the guide exactly as if you had the Pi connected to a keyboard.
 Alternatively use a VNC client like [VNC viewer](https://www.realvnc.com/en/connect/download/viewer/) and connect to the 
 raspberrypi to see the desktop wirelessly. 
 To turn on VNC, see [Enable SPI and I2C](#enable-spi-and-i2c) for how to do this.
@@ -90,7 +103,7 @@ wget https://raw.githubusercontent.com/adafruit/Raspberry-Pi-Installer-Scripts/m
 sudo -E env PATH=$PATH python3 raspi-blinka.py
 ```
 
-Then check it has been installed correct with `ls /dev/i2c* /dev/spi*`
+Press Y when prompted to reboot. Then check it has been installed correct with `ls /dev/i2c* /dev/spi*`
 If the output is similar to: `/dev/i2c-1   /dev/spidev0.0 /dev/spidev0.1` you are ready to continue on,
 if not go to the link and try their troubleshooting.
 
@@ -118,13 +131,16 @@ A new file called spi-cs-extend.dtbo should have been created and can be confirm
 This file will then be moved to the boot folder using:
 
 ```angular2html
-mv spi-cs-extend.dtbo /boot/overlays
+sudo mv spi-cs-extend.dtbo /boot/overlays
 ```
 
 Then a file needs to editted. 
 
-Run using a text editor (here nano):
-
+For Raspberry Pi5 using a text editor (here nano):
+```angular2html
+sudo nano /boot/firmware/config.txt
+```
+For Raspberry Pi4 
 ```angular2html
 sudo nano /boot/config.txt
 ```
