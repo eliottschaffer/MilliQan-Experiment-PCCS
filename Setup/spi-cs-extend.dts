@@ -8,7 +8,7 @@
 	fragment@0 {
 		target = <&spi0_cs_pins>;
 		frag0: __overlay__ {
-			brcm,pins = <8 7 6 12 16 19 21>;
+			brcm,pins = <8 7 25 22 27 17 4>;
 		};
 	};
 
@@ -18,7 +18,7 @@
 			#address-cells = <1>;
 			#size-cells = <0>;
 
-			cs-gpios = <&gpio 8 1>, <&gpio 7 1>, <&gpio 6 1>, <&gpio 12 1>, <&gpio 16 1>, <&gpio 19 1>, <&gpio 21 1>;
+			cs-gpios = <&gpio 8 1>, <&gpio 7 1>, <&gpio 25 1>, <&gpio 22 1>, <&gpio 27 1>, <&gpio 17 1>, <&gpio 4 1>;
 			status = "okay";
 
 			spidev0_2: spidev@2 {
