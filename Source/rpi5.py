@@ -11,7 +11,7 @@ import gpiod
 
 chip = gpiod.Chip('gpiochip4')
 
-Pulse_En = chip.get_line(5)
+Pulse_En = chip.get_line(14)
 Pulse_En.request(consumer="Pulse_En", type=gpiod.LINE_REQ_DIR_OUT)
 
 Pulse_Send = chip.get_line(23)
@@ -21,14 +21,15 @@ Pulse_Send.request(consumer="Pulse_Send", type=gpiod.LINE_REQ_DIR_OUT)
 Sys_Rst = chip.get_line(26)
 Sys_Rst.request(consumer="Sys_Rst", type=gpiod.LINE_REQ_DIR_OUT)
 
-OE = chip.get_line(17)
+OE = chip.get_line(15)
 OE.request(consumer="OE", type=gpiod.LINE_REQ_DIR_OUT)
 
 
-
+Trigger_Send = chip.get_line(24)
+Trigger_Send.request(consumer="Trigger_Send", type=gpiod.LINE_REQ_DIR_OUT)
 
 # The program works using 3 different objects, A run object which is created every time runs are requested,
-# A detector object which handles the data flow to 4 Detector layer objects, each of which actually send the SPI data
+# A detector object which handles the data flow to 5 Detector layer objects, each of which actually send the SPI data
 # to their respective Pico Blade. A pulse is then created by turning on and off specific sets of GPIO pins. The creating
 # of the data is inside the Run object which is parsed to the Detector objects which instructs the Layers to and does timing.
 
@@ -66,8 +67,9 @@ class DetectorLayer:
         voltage_bytes = bytearray()
 
         for value in voltage:
-            voltage_bytes.append(value & 0xFF)  # Low byte
             voltage_bytes.append((value >> 8) & 0xFF)  # High byte
+            voltage_bytes.append(value & 0xFF)  # Low byte
+
 
         self.data_array.extend(voltage_bytes)
 
@@ -88,7 +90,7 @@ class DetectorLayer:
         opcode_scan = bytearray()
         opcode_scan.extend([0xff, 0xfe])
         opcode_scan.extend([0x00 for _ in range(34)])
-        self.display(opcode_scan)
+        #self.display(opcode_scan)
         self.spi.xfer3(opcode_scan)
         self.spi.close()
 
@@ -129,9 +131,13 @@ def send_pulse():
     Pulse_En.set_value(1)
     print("Pulse  Allowed")
 
+    Trigger_Send.set_value(1)
     Pulse_Send.set_value(1)
-    time.sleep(0.1)
+    time.sleep(.00001)
+    Trigger_Send.set_value(0)
+    time.sleep(.1)
     Pulse_Send.set_value(0)
+
 
     Pulse_En.set_value(0)
     OE.set_value(1)
@@ -174,33 +180,35 @@ class Run:
         self.run_list = run_list_raw
         self.milliqan_trigger = bool(trigger)
         self.odetector = Detector(4)
+        time.sleep(5)
         self.random = randomize
-        self.run_type_list = ['mcp', 'rand', 'layer', 'layer0', 'layer1', 'layer2', 'layer3', 'layer4']
+        self.run_type_list = ['mcp', 'rand', 'layer', 'layer0', 'layer1', 'layer2', 'layer3', 'layer4', 'chan']
         self.timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
     def create_run(self):
         print("Entered Run")
         for i in range(len(self.run_list)):
-            print((len(self.run_list)))
+            #print((len(self.run_list)))
             emulation_type = self.run_list[i]
             if emulation_type in self.run_type_list:
                 create_function = getattr(self, f"create_{emulation_type}", None)
                 if create_function and callable(create_function):
+                    time.sleep(.4)
                     create_start = time.time()
                     create_function()
                     create_end = time.time()
-                    print("Create time: ", create_end - create_start)
+                    #print("Create time: ", create_end - create_start)
                     # self.odetector.display()
                     send_start = time.time()
                     self.odetector.send_data()
                     send_end = time.time()
-                    print("Send time: ", send_end - send_start)
+                    #print("Send time: ", send_end - send_start)
                     clear_start = time.time()
                     self.odetector.clear()
                     clear_end = time.time()
-                    print("Clear time: ", clear_end - clear_start)
-                    time.sleep(0.1)
+                    #print("Clear time: ", clear_end - clear_start)
+
 
 
     def create_mcp(self):
@@ -235,22 +243,37 @@ class Run:
 
         bit_map = [[[random.randint(0, 1) for _ in range(4)] for _ in range(4)] for _ in range(4)]
 
-        voltages = [random.randrange(1000, 3000, 5) for _ in range(16)]
+        voltages = [random.randrange(4000, 4005, 5) for _ in range(16)]
 
         for blade_index, _ in enumerate(range(4)):
             self.odetector.set_blade_pattern(blade_index, bit_map[_], voltages)
 
 
-    # def load_run(self):
     def create_layer(self, layer_on=None):
         if layer_on is None:
             layer_on = random.randint(0, 4)
 
         bit_map = [[[0 for _ in range(4)] for _ in range(4)] for _ in range(4)]
         bit_map[layer_on] = [[1 for _ in range(4)] for _ in range(4)]
-        print(bit_map)
+        #print(bit_map)
 
-        volt_val = random.randrange(1000, 3000, 5)
+        volt_val = random.randrange(500, 505, 5)
+
+        voltage = [volt_val for _ in range(0, 16)]
+
+        for blade_index, _ in enumerate(range(4)):
+            self.odetector.set_blade_pattern(blade_index, bit_map[_], voltage)
+
+    def create_chan(self):
+        chan = 3
+        layer = (chan) // 16
+        row = ((chan) % 16) // 4
+        column = (chan) % 4
+
+        bit_map = [[[0 for _ in range(4)] for _ in range(4)] for _ in range(4)]
+        bit_map[layer][row][column] = 1
+
+        volt_val = random.randrange(2000, 2005, 5)
 
         voltage = [volt_val for _ in range(0, 16)]
 
@@ -295,7 +318,7 @@ if __name__ == '__main__':
             randomize = 0
             trigger = 0
             for _ in range(len(user_input_parts)):
-                if user_input_parts[_] in ['mcp', 'rand', 'layer', 'layer0', 'layer1', 'layer2', 'layer3']:
+                if user_input_parts[_] in ['mcp', 'rand', 'layer', 'layer0', 'layer1', 'layer2', 'layer3', 'chan']:
                     try:
                         number = int(user_input_parts[_ + 1])
                     except IndexError:

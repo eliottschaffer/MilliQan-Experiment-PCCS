@@ -179,12 +179,12 @@ This is most easily done with Windows of Mac.
 Flash the Picos with the code. To do this:
 
 1. While holding down the boot button on the Picos. Plug it using a micro-usb cable into a computer.
-2. A writeable drive should have appeared in your file explorer. Download the complied uf2 code [LV_Dist_SPi.uf2](/Source/LV_Dist_Spi.uf2)
+2. A writeable drive should have appeared in your file explorer. Download the complied uf2 code [LV_Dist_SPi.uf2](/Source/Pico/LV_Dist_Spi.uf2)
 3. Drag that uf2 file onto the writeable drive. It should then disappear. This means it has been written correctly.
 
 The Picos should now be ready to use and can be plugged into the Blades.
 
 
-For creating new Pico firmware, many hoops have to be jumped through to get the C-SDK working. For now (unless I go ahead and make documentation for it), one can take a look at the source code, [main.c](/Source/main.c)
+For creating new Pico firmware, many hoops have to be jumped through to get the C-SDK working. For now (unless I go ahead and make documentation for it), one can take a look at the source code, [main.c](/Source/Pico/main.c)
 and email me at eliottschaffer@ucsb.edu or eliottschaffer@gmail.com for any concerns.
 
