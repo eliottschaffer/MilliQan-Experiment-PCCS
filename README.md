@@ -111,7 +111,7 @@ if not go to the link and try their troubleshooting.
 This system utilizes more than the two default spi chip selects. To add the extra chip selects (5 extra for 7 in total), copy this
 repository into the RPi. This is done with 
 ```
-git clone https://github.com/eliottschaffer/MilliQan-Experiment-LV-Dist-Calibration
+git clone https://github.com/eliottschaffer/MilliQan-Experiment-PCCS
 ```
 
 Within the setup folder, a file [spi-cs-extend.dts](/Setup/spi-cs-extend.dts) can we found. This file needs to be 
