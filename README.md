@@ -120,7 +120,7 @@ compiled locally. This spi extender template comes from this [forum](https://gis
 Navigate to the folder with
 
 ```angular2html
-cd ~/MilliQan-Experiment-LV-Dist-Calibration/Setup
+cd ~/MilliQan-Experiment-PCCS/Setup
 ```
 and run
 ```angular2html
