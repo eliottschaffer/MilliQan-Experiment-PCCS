@@ -1,15 +1,35 @@
-# PCCS Board Code
+# PCCS_Receiver - This Program is designed for the MilliQan Slab detector Utilization of the PCCS. In the slab schema,
+# there are 4 PCCS crates, one for each layer, which need to all work together. Specifically this program is the
+# "Sub" Code which is run by one of the Sub PCCS. This is a streamlined version of the PCCS_Sender code which instead
+# of processing the data from the csv, receives the data from the MQTT TOPICs.
+
+# Only the new MQTT Functions will be Commented, for info about the main three objects, currently look at PCCS_Sender
+
 
 #from rpi5 import Run
 
+import paho.mqtt.client as mqtt
+import struct
 import time
 import spidev
-import datetime
-import csv
-import sys
 import gpiod
 import smbus
-import logging
+import json
+import threading
+import socket
+import traceback
+
+HEARTBEAT_INTERVAL = 5  # seconds
+PI_ID = "PCCS_Sub_1"
+client_id = PI_ID
+broker_ip = "192.168.110.110"
+
+TOPIC_HANDSHAKE = "pccs/handshake"
+TOPIC_DATA = f"pccs/data/{PI_ID}"
+TOPIC_ACK = f"pccs/ack/{PI_ID}"
+TOPIC_STATUS = f"pccs/status/{PI_ID}"
+TOPIC_ERROR = f"pccs/error/{PI_ID}"
+
 
 chip = gpiod.Chip('gpiochip4')
 
@@ -35,6 +55,7 @@ def log_timestamp(file_path="desync.log", event="Unknown Event"):
     with open(file_path, "a") as f:
         f.write(f"{timestamp} - {event}\n")
 
+
 # The program works using 3 different objects, A run object which is created every time runs are requested,
 # A detector object which handles the data flow to 5 Detector layer objects, each of which actually send the SPI data
 # to their respective Pico Blade. A pulse is then created by turning on and off specific sets of GPIO pins. The data is
@@ -50,7 +71,7 @@ def send_pulse():
     print("Pulse  Allowed")
 
     Pulse_Send.set_value(1)
-    time.sleep(.1)
+    time.sleep(0.01)
     Pulse_Send.set_value(0)
 
     Pulse_En.set_value(0)
@@ -174,39 +195,53 @@ class DetectorLayer:
 
         self.clear()
 
-    def verification(self, new_previous):
-        #print(self.pico_return)
-        #print(self.previous_array)
 
-        if(sum(self.pico_return) == 0):
+    def verification(self, new_previous):
+
+        # This function does some checks on the Pico's returned data
+        # It and also can detect if a pico is actually connected and if it is desynced.
+        # TODO Extract new error Pico Codes and Base infomation from the remaining pico return values
+        #  Use these in the MQTT Server
+
+        # Debug
+        # print(self.pico_return)
+        # print(self.previous_array)
+
+        if (sum(self.pico_return) == 0):
+            # If the return is all zeros, either the Pico is dead or there is none connected
             print("No Pico in this")
             self.previous_array = tuple(new_previous)
             return
-        elif(self.pico_return[0:3] == [255,254,253,252] or self.previous_array == ()):
+        elif (self.pico_return[4] == [255] or self.previous_array == ()):
+            # The defult value on startup from the Pico, tells us something is connected
             print("initial loops")
             self.previous_array = tuple(new_previous)
             return
-        elif(self.pico_return[0:3] == self.previous_array[0:3]):
+        elif (self.pico_return[0:3] == self.previous_array[0:3]):
+            # For the second flashing onwards, the pico return's first 4 bytes should match up with the previous
+            # frames first 4 values
             print("Verified Correct")
+            # update the previous array with the new array provided to the function
             self.previous_array = tuple(new_previous)
             return
         else:
+            # If none of the conditions are met, that is we get random values, we enter the desync mode
+            # Currently we do a pretty complex process to fix the desync
+            # TODO Figure our if just having the Pico restart is a better solution
             log_timestamp(event="Desync detected")
             print("Entering Desync Fixing")
             self.desync_protocol()
-
-
     def desync_protocol(self):
         ## When desynced the pico is recieving the opcode and data in the wrong order.
 
         self.spi.open(0, self.cs)
-        self.spi.max_speed_hz = 50*1000
+        self.spi.max_speed_hz = 50 * 1000
         self.spi.mode = 0
 
         desync_test = bytearray()
         desync_fix = bytearray()
 
-        desync_test.extend([i for i in range(36)]) # An array 0-35 in bytes
+        desync_test.extend([i for i in range(36)])  # An array 0-35 in bytes
         print(desync_test)
         time.sleep(0.5)
         print("Zeroth Test send", self.spi.xfer3(desync_test))
@@ -216,7 +251,7 @@ class DetectorLayer:
         print("CALCULATED DESYNC = ", test_return1[-1])
 
         time.sleep(0.5)
-        #int(test_return1[-1])
+        # int(test_return1[-1])
         desync_fix.extend([i for i in range(test_return1[-1] + 1)])
         print(desync_fix)
         time.sleep(0.5)
@@ -225,7 +260,7 @@ class DetectorLayer:
         print(test_return2)
         time.sleep(0.5)
         revert_array = bytearray()
-        revert_array.extend([255,255])
+        revert_array.extend([255, 255])
         revert_array.extend([0 for i in range(34)])
         test_return3 = self.spi.xfer3(revert_array)
         self.previous_array = tuple(revert_array)
@@ -236,9 +271,6 @@ class DetectorLayer:
         print("Desync Hopefully fixed")
         log_timestamp(event="Hopefully fixed")
         print("prev_return = ", self.previous_array)
-
-
-
 
     def send_slab_data(self):
 
@@ -260,7 +292,7 @@ class DetectorLayer:
         self.pico_return = self.spi.xfer3(opcode_data1)
         self.verification(opcode_data1)
 
-        time.sleep(0.5)
+        time.sleep(0.1)
 
         opcode_data2 = bytearray()
         opcode_data2.extend([0xff, 0xfd])
@@ -293,6 +325,7 @@ class DetectorLayer:
         self.data_array.clear()
         self.data_array2.clear()
 
+
 class Detector:
     def __init__(self, number_of_layers):
         self.number_of_layers = number_of_layers
@@ -305,127 +338,123 @@ class Detector:
         for index in range(self.number_of_layers):
             self.olayer[index].layer_scan()
 
-    def set_blade_data(self, chan_val):
-        # Send increments of 16 channel values to each layer
-        for i in range(self.number_of_layers):
-            self.olayer[i].set_data(chan_val[i * 16:(i + 1) * 16])
-
     def set_slab_blade_data(self, chan_val):
         for i in range(self.number_of_layers):
             print("Chan ", i, "is getting data ", chan_val[i * 32:(i + 1) * 32])
             self.olayer[i].set_data(chan_val[i * 32:(i + 1) * 32])
 
 
-    def send_data(self):
-        # Tells the layer objects to send their data to the Picos
-        for _ in range(len(self.olayer)):
-            self.olayer[_].send_data()
-        send_pulse()
-
     def send_slab_data(self):
         # Tells the layer objects to send their data to the Picos
         for _ in range(len(self.olayer)):
             self.olayer[_].send_slab_data()
         send_pulse()
-
-    def set_trigger(self, trigger_bool):
-        # Change the triggering logic for MilliQan detector
-        self.trigger = trigger_bool
-
-    def set_length(self, length):
-        # Validate that length is a digit and within the range 100-1100
-        if not length.isdigit() or int(length) < 100 or int(length) > 1100:
-            length = 500
-
-        # Convert the 100-1100 ns range to 7-207 corresponding i2c hex range, 0x07 - 0xcf
-        i2c_bit = round((int(length) - 100) / 5) + 7
-
-        # Send the I2C command
-        bus.write_i2c_block_data(pot_addr, 0x00, [i2c_bit])
-
-
 class Import_csv:
-    def __init__(self, csv_file):
-        self.data = []
-        self.odetector = Detector(4)
+    def __init__(self):
+        self.odetector = Detector(2)
 
-        with open(csv_file, newline='') as csvfile:
-            reader = csv.reader(csvfile)
-            # Skip the header row if needed
-            next(reader)  # Uncomment this line if your CSV file has a header row
-            # Iterate over each row in the CSV file
-            for row in reader:
-                # Append each row to the data list
-                self.data.append(row)
+    def set_layer(self,data):
+        self.slab_run(data)
 
-    def start_csv_run(self):
-        prev_data = 0
-        prev_prev_data = 0
-        for j in range(10):
-            for k in range(25):
-                for i in range(len(self.data)):
-                    datai = self.data[i]
-                    detecor_type = datai[0]
-                    print(datai, detecor_type)
-
-                    if prev_prev_data == datai:
-                        send_fastpulse()
-                        print("Fast Flash")
-                    else:  # change "if True" to else to get fast flashes back
-                        match detecor_type:
-                            case 'bar':
-                                self.bar_run(datai)
-                            case 'slab':
-                                self.slab_run(datai)
-                        prev_prev_data = prev_data
-                        prev_data = datai
-
-
-    def bar_run(self, datai):
-        print("Entered Bar Run")
-        trigger = datai[3]
-        pulse_length = datai[4]
-        chan_val = datai[5:85]
-
-        processed_chan_val = [
-            '0' if val.strip() == '' or not val.strip().isdigit()
-            else ('4000' if int(val) > 4000 else val.strip())
-            for val in chan_val
-        ]
-        self.odetector.set_length(pulse_length)
-        self.odetector.set_blade_data(processed_chan_val)
-        self.odetector.set_trigger(trigger)
-        self.odetector.send_data()
-        time.sleep(0.4)
-
-    def slab_run(self, datai):
+    def slab_run(self, data):
         print("Entered Slab Run")
-        trigger = datai[3]
-        pulse_length = datai[4]
-        chan_val = datai[5:165]
+        print("Processed chan val", data)
 
-        processed_chan_val = [
-            '0' if val.strip() == '' or not val.strip().isdigit()
-            else ('4000' if int(val) > 4000 else val.strip())
-            for val in chan_val
-        ]
-        print("Processed chan val", processed_chan_val)
-
-        self.odetector.set_length(pulse_length)
-        self.odetector.set_slab_blade_data(processed_chan_val)
-        self.odetector.set_trigger(trigger)
+        self.odetector.set_slab_blade_data(data)
         self.odetector.send_slab_data()
-        time.sleep(0.4)
+        time.sleep(0.3)
+
+
+def on_message(client, userdata, message):
+    print("Message Recieved")
+
+    topic = message.topic
+
+    if topic == TOPIC_HANDSHAKE:
+        msg = message.payload.decode()
+        if msg == "SYNC":
+            print(f"Handshake request received, responding with ACK from {PI_ID}")
+            client.publish(TOPIC_HANDSHAKE, f"ACK_{PI_ID}")
+
+    elif topic.startswith("pccs/data/"):
+        data = message.payload
+        voltages = struct.unpack(">48H", data)
+        print(f"[{PI_ID}] Received voltages: {voltages}")
+        slab_layer_data = list(voltages) + ['0'] * 16
+        oDetector.set_layer(slab_layer_data)
+
+
+
+
+def publish_heartbeat():
+    while True:
+        try:
+            payload = {
+                "status": "alive",
+                "timestamp": int(time.time()),
+                "hostname": socket.gethostname()
+            }
+            client.publish(TOPIC_STATUS, json.dumps(payload))
+        except Exception as e:
+            print("Heartbeat error:", e)
+        time.sleep(HEARTBEAT_INTERVAL)
+
+def publish_error(err_msg, context="general"):
+    error = {
+        "status": "error",
+        "timestamp": int(time.time()),
+        "context": context,
+        "message": err_msg,
+    }
+    client.publish(TOPIC_ERROR, json.dumps(error))
+
+def publish_ready_for_flash():
+    ready_msg = {
+        "status": "ready_for_flash",
+        "timestamp": int(time.time()),
+        "hostname": socket.gethostname()
+    }
+    client.publish(TOPIC_STATUS, json.dumps(ready_msg))
+def on_message(client, userdata, message):
+    try:
+        topic = message.topic
+
+        if topic == TOPIC_HANDSHAKE:
+            msg = message.payload.decode()
+            if msg == "SYNC":
+                print(f"Handshake request received, responding with READY from {PI_ID}")
+                client.publish(TOPIC_HANDSHAKE, f"READY_{PI_ID}")
+
+        elif topic == TOPIC_DATA:
+            data = message.payload
+            voltages = struct.unpack(">48H", data)
+            slab_layer_data = list(voltages) + ['0'] * 16
+            oDetector.set_layer(slab_layer_data)
+
+            publish_ready_for_flash()
+
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[{PI_ID}] Error in on_message: {e}")
+        publish_error(tb, context="on_message")
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        print("Usage: python LV_Import.py <file_path>\n")
-        print(
-            "For the usage and system information please refer to Github Repo: MilliQan-Experiment-LV-Dist-Calibration (will need to search within github)")
-        sys.exit(1)
-    else:
-        Import = Import_csv(sys.argv[1])
-        Import.start_csv_run()
-        print("Import Run finished successfully")
 
+    client = mqtt.Client(client_id=PI_ID, callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+
+    oDetector = Import_csv()
+
+    client.on_message = on_message
+    client.connect(broker_ip, 1883, 60)
+    client.subscribe(TOPIC_HANDSHAKE)
+    client.subscribe(TOPIC_DATA)
+
+    # client.publish(TOPIC_HANDSHAKE, f"READY_{PI_ID}")
+
+    # Heartbeat of PCCS Sub ID to Main Pi. Will be used in Combination with the ACK to determine what is wrong.
+    heartbeat_thread = threading.Thread(target=publish_heartbeat, daemon=True)
+    heartbeat_thread.start()
+
+    client.loop_forever()
