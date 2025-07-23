@@ -18,17 +18,29 @@ import json
 import threading
 import socket
 import traceback
+import logging
 
-HEARTBEAT_INTERVAL = 5  # seconds
-PI_ID = "PCCS_Sub_1"
+HEARTBEAT_INTERVAL = 15  # seconds
+PI_ID = "PCCS_Flasher"
 client_id = PI_ID
-broker_ip = "192.168.110.110"
+broker_ip = "10.31.209.110" # Change the Real IP
+
+
+FIRST_RECONNECT_DELAY = 1
+RECONNECT_RATE = 2
+MAX_RECONNECT_COUNT = 12
+MAX_RECONNECT_DELAY = 60
+
+FLAG_EXIT = False
+
 
 TOPIC_HANDSHAKE = "pccs/handshake"
 TOPIC_DATA = f"pccs/data/{PI_ID}"
 TOPIC_ACK = f"pccs/ack/{PI_ID}"
 TOPIC_STATUS = f"pccs/status/{PI_ID}"
 TOPIC_ERROR = f"pccs/error/{PI_ID}"
+TOPIC_PULSE = f"pccs/pulse/{PI_ID}"
+TOPIC_PREP = f"pccs/prep/{PI_ID}"
 
 
 chip = gpiod.Chip('gpiochip4')
@@ -44,6 +56,9 @@ Sys_Rst.request(consumer="Sys_Rst", type=gpiod.LINE_REQ_DIR_OUT)
 
 OE = chip.get_line(15)
 OE.request(consumer="OE", type=gpiod.LINE_REQ_DIR_OUT)
+
+Trigger_Send = chip.get_line(24)
+Trigger_Send.request(consumer="Trigger_Send", type=gpiod.LINE_REQ_DIR_OUT)
 
 bus = smbus.SMBus(1)
 pot_addr = 0x2c
@@ -62,38 +77,71 @@ def log_timestamp(file_path="desync.log", event="Unknown Event"):
 # imported from the CSV file that the program is run with.
 
 
-def send_pulse():
+def send_pulse(trigger):
+    # The sequence to start a Pulse:
+    # Sys_Rst is a hardware reset on many ICs all tied together, good practice to reset each time.
+    # OE* is an enable pin for a buffer in the pulse sequence, it is put low to allow the pulse to pass
+    # Pulse Enable is the 3rd signal in the 3 input AND Switch,without it no pulse (this pin can be grounded via switch)
+    # Trigger_Send is the optional triggering of the MilliDAQ - Function
+    # Pulse_Send is the signal that starts the one-shots, creating the pulse
+
     Sys_Rst.set_value(0)
     Sys_Rst.set_value(1)
 
     OE.set_value(0)
     Pulse_En.set_value(1)
     print("Pulse  Allowed")
-
+    Trigger_Send.set_value(trigger)
     Pulse_Send.set_value(1)
-    time.sleep(0.01)
-    Pulse_Send.set_value(0)
 
+    time.sleep(.1)
+
+    Trigger_Send.set_value(0)
+    Pulse_Send.set_value(0)
     Pulse_En.set_value(0)
     OE.set_value(1)
     print("Pulse No longer allowed")
 
 
-def send_fastpulse():
-    Sys_Rst.set_value(0)
-    Sys_Rst.set_value(1)
+def send_fastpulse(trigger, flashing_hz=3, number_of_pulses=10):
+    # Same as the regular pulse with a different time.sleep, can become a function
+    for i in range(0,number_of_pulses):
+        Sys_Rst.set_value(0)
+        Sys_Rst.set_value(1)
 
-    OE.set_value(0)
-    Pulse_En.set_value(1)
-    print("Pulse  Allowed")
+        OE.set_value(0)
+        Pulse_En.set_value(1)
+        print("Pulse  Allowed")
 
-    Pulse_Send.set_value(1)
-    time.sleep(1 / 300)  # 300Hz for DRS
-    Pulse_Send.set_value(0)
+        Trigger_Send.set_value(trigger)
+        Pulse_Send.set_value(1)
+        time.sleep(1 / flashing_hz)  # 300Hz for DRS, ~ 3 for triggered DAQ
 
-    Pulse_En.set_value(0)
-    OE.set_value(1)
-    print("Pulse No longer allowed")
+        Trigger_Send.set_value(0)
+        Pulse_Send.set_value(0)
+
+        Pulse_En.set_value(0)
+        OE.set_value(1)
+        print("Pulse No longer allowed")
+
+    print("Fast Flash Over")
+def set_length(length):
+    # Set the length of the LED pulse.
+
+    # First validate that length is a digit and within the range 100-1100
+    if not isinstance(length, int) or length < 100 or length > 1100:
+        # if it is not a number, too big or too small make it 500
+        length = 500
+
+    # Convert the 100-1100 ns range to 7-207 corresponding i2c hex range, 0x07 - 0xcf
+    # This is the tested "Good" region of the potentiometer working with the oneshot
+    i2c_bit = round((int(length) - 100) / 5) + 7
+
+    # The potentiometer uses I2C, a communication protocol that is only used for a little in this program
+    # but used extensively in the Picos. Hardware have hardwired address which we can write data into registers.
+    # in this case, the register is 0x00 and the data we write to is the resistance which controls the one-shot RC and
+    # therefore the pulse-length
+    bus.write_i2c_block_data(pot_addr, 0x00, [i2c_bit])
 
 
 class DetectorLayer:
@@ -229,6 +277,7 @@ class DetectorLayer:
             # Currently we do a pretty complex process to fix the desync
             # TODO Figure our if just having the Pico restart is a better solution
             log_timestamp(event="Desync detected")
+            publish_error(err_msg=f"Desync Error in Pico {self.cs}", context="Failed Pico Verification")
             print("Entering Desync Fixing")
             self.desync_protocol()
     def desync_protocol(self):
@@ -292,7 +341,7 @@ class DetectorLayer:
         self.pico_return = self.spi.xfer3(opcode_data1)
         self.verification(opcode_data1)
 
-        time.sleep(0.1)
+        time.sleep(0.4)
 
         opcode_data2 = bytearray()
         opcode_data2.extend([0xff, 0xfd])
@@ -303,7 +352,7 @@ class DetectorLayer:
         self.spi.close()
         self.clear()
 
-    def layer_scan(self):
+    def layer_scan(self, bad_chans):
 
         self.spi.open(0, self.cs)
         self.spi.max_speed_hz = 50 * 1000
@@ -314,7 +363,8 @@ class DetectorLayer:
         #     self.spi.xfer3([byte])
         opcode_scan = bytearray()
         opcode_scan.extend([0xff, 0xfe])
-        opcode_scan.extend([0x00 for _ in range(34)])
+        opcode_scan.extend(bad_chans) # 16 values
+        opcode_scan.extend([0x00 for _ in range(18)])
         # self.display(opcode_scan)
         self.pico_return = self.spi.xfer3(opcode_scan)
         self.verification(opcode_scan)
@@ -332,11 +382,10 @@ class Detector:
         self.spi = spidev.SpiDev()
         self.olayer = [DetectorLayer(_, self.spi) for _ in range(number_of_layers)]
         # self.i2c_scan()
-        self.trigger = False
 
-    def i2c_scan(self):
+    def i2c_scan(self, bad_chans):
         for index in range(self.number_of_layers):
-            self.olayer[index].layer_scan()
+            self.olayer[index].layer_scan(bad_chans[index * 16:(index+1) * 16])
 
     def set_slab_blade_data(self, chan_val):
         for i in range(self.number_of_layers):
@@ -348,13 +397,20 @@ class Detector:
         # Tells the layer objects to send their data to the Picos
         for _ in range(len(self.olayer)):
             self.olayer[_].send_slab_data()
-        send_pulse()
-class Import_csv:
+
+class PCCS_Receiver:
     def __init__(self):
         self.odetector = Detector(2)
 
     def set_layer(self,data):
         self.slab_run(data)
+
+    def initialize(self,bad_chans):
+        Sys_Rst.set_value(0)
+        Sys_Rst.set_value(1)
+        time.sleep(1)
+        self.odetector.i2c_scan(bad_chans)
+
 
     def slab_run(self, data):
         print("Entered Slab Run")
@@ -365,34 +421,13 @@ class Import_csv:
         time.sleep(0.3)
 
 
-def on_message(client, userdata, message):
-    print("Message Recieved")
-
-    topic = message.topic
-
-    if topic == TOPIC_HANDSHAKE:
-        msg = message.payload.decode()
-        if msg == "SYNC":
-            print(f"Handshake request received, responding with ACK from {PI_ID}")
-            client.publish(TOPIC_HANDSHAKE, f"ACK_{PI_ID}")
-
-    elif topic.startswith("pccs/data/"):
-        data = message.payload
-        voltages = struct.unpack(">48H", data)
-        print(f"[{PI_ID}] Received voltages: {voltages}")
-        slab_layer_data = list(voltages) + ['0'] * 16
-        oDetector.set_layer(slab_layer_data)
-
-
-
-
 def publish_heartbeat():
     while True:
         try:
             payload = {
                 "status": "alive",
                 "timestamp": int(time.time()),
-                "hostname": socket.gethostname()
+                "hostname": PI_ID
             }
             client.publish(TOPIC_STATUS, json.dumps(payload))
         except Exception as e:
@@ -412,9 +447,20 @@ def publish_ready_for_flash():
     ready_msg = {
         "status": "ready_for_flash",
         "timestamp": int(time.time()),
-        "hostname": socket.gethostname()
+        "hostname": PI_ID
     }
     client.publish(TOPIC_STATUS, json.dumps(ready_msg))
+
+
+def publish_flash_done():
+    ready_msg = {
+        "status": "flash_done",
+        "timestamp": int(time.time()),
+        "hostname": PI_ID
+    }
+    client.publish(TOPIC_STATUS, json.dumps(ready_msg))
+
+
 def on_message(client, userdata, message):
     try:
         topic = message.topic
@@ -425,13 +471,51 @@ def on_message(client, userdata, message):
                 print(f"Handshake request received, responding with READY from {PI_ID}")
                 client.publish(TOPIC_HANDSHAKE, f"READY_{PI_ID}")
 
-        elif topic == TOPIC_DATA:
-            data = message.payload
-            voltages = struct.unpack(">48H", data)
-            slab_layer_data = list(voltages) + ['0'] * 16
-            oDetector.set_layer(slab_layer_data)
 
+        elif topic == TOPIC_PREP:
+            bad_channel_packed = message.payload
+            bad_channels = struct.unpack(">24B", bad_channel_packed)
+            bad_channels_data = list(bad_channels) + [0] * 16
+            pccs_receiver.initialize(bad_channels_data)
+
+        elif topic == TOPIC_DATA:
+
+            data = message.payload
+            if PI_ID == "PCCS_Flasher":
+                unpacked = struct.unpack(">49H", data)
+                length = unpacked[0]
+                set_length(length)
+                voltages = unpacked[1:]  # 48 values
+            else:
+                voltages = struct.unpack(">48H", data)
+
+            slab_layer_data = list(voltages) + ['0'] * 16
+            pccs_receiver.set_layer(slab_layer_data)
             publish_ready_for_flash()
+
+        elif topic == TOPIC_PULSE:
+            try:
+                msg = json.loads(message.payload.decode())  # Decode and parse JSON
+            except Exception as e:
+                print(f"Failed to parse pulse message: {e}")
+                return
+
+            pulse_type = msg.get("type", "")
+            trigger = msg.get("trigger", 0)
+
+            if pulse_type == "single":
+                send_pulse(trigger)
+
+            elif pulse_type == "fast":
+                rate = msg.get("rate", None)
+                count = msg.get("count", None)
+                if rate is not None and count is not None:
+                    send_fastpulse(trigger, rate, count)  # Define this function to handle fast pulses
+                else:
+                    print(f"Incomplete fast pulse info: {msg}")
+
+            else:
+                print(f"Unknown pulse type received: {pulse_type}")
 
 
     except Exception as e:
@@ -440,16 +524,43 @@ def on_message(client, userdata, message):
         publish_error(tb, context="on_message")
 
 
+def on_disconnect(client, userdata, rc):
+    logging.info("Disconnected with result code: %s", rc)
+    reconnect_count, reconnect_delay = 0, FIRST_RECONNECT_DELAY
+    while reconnect_count < MAX_RECONNECT_COUNT:
+        logging.info("Reconnecting in %d seconds...", reconnect_delay)
+        time.sleep(reconnect_delay)
+
+        try:
+            client.reconnect()
+            logging.info("Reconnected successfully!")
+            return
+        except Exception as err:
+            logging.error("%s. Reconnect failed. Retrying...", err)
+
+        reconnect_delay *= RECONNECT_RATE
+        reconnect_delay = min(reconnect_delay, MAX_RECONNECT_DELAY)
+        reconnect_count += 1
+    logging.info("Reconnect failed after %s attempts. Exiting...", reconnect_count)
+    global FLAG_EXIT
+    FLAG_EXIT = True
+
+
 if __name__ == '__main__':
 
-    client = mqtt.Client(client_id=PI_ID, callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+    client = mqtt.Client(client_id=PI_ID)
 
-    oDetector = Import_csv()
+    pccs_receiver = PCCS_Receiver()
 
     client.on_message = on_message
     client.connect(broker_ip, 1883, 60)
+    client.on_disconnect = on_disconnect
     client.subscribe(TOPIC_HANDSHAKE)
     client.subscribe(TOPIC_DATA)
+    client.subscribe(TOPIC_PREP)
+
+    if PI_ID == "PCCS_Flasher":
+        client.subscribe(TOPIC_PULSE)
 
     # client.publish(TOPIC_HANDSHAKE, f"READY_{PI_ID}")
 

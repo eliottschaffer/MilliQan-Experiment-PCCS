@@ -69,7 +69,7 @@ bus = smbus.SMBus(1)
 pot_addr = 0x2c
 
 
-# Logging of Desync, I think I will update this to include more information.
+# Logging of Desync, TODO update this to include more information.
 def log_timestamp(file_path="desync.log", event="Unknown Event"):
     """Logs the current timestamp and event description to a file."""
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -103,7 +103,7 @@ def send_pulse(trigger):
     print("Pulse No longer allowed")
 
 
-def send_fastpulse():
+def send_fastpulse(trigger):
     # Same as the regular pulse with a different time.sleep, can become a function
     Sys_Rst.set_value(0)
     Sys_Rst.set_value(1)
@@ -112,7 +112,7 @@ def send_fastpulse():
     Pulse_En.set_value(1)
     print("Pulse  Allowed")
 
-    Trigger_Send.set_value(1)
+    Trigger_Send.set_value(trigger)
     Pulse_Send.set_value(1)
     time.sleep(1 / 300)  # 300Hz for DRS
 
