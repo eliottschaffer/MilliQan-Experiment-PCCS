@@ -13,7 +13,7 @@ import datetime
 import csv
 import sys
 
-broker_ip = "10.31.209.110"  # Replace with MillQan PC's IP (Or where ever the MQTT Broker is initialized),
+broker_ip = "128.141.91.10"  # Replace with MillQan PC's IP (Or where ever the MQTT Broker is initialized),
 # see GitHub readme
 
 # MQTT Topics (Sending)
@@ -43,13 +43,29 @@ bad_channels = [0] * 96
 # 2 Means 0x4C is dead
 # 3 Means both I2C devices are dead
 
-bad_channels[4] = 3  # channel 4 has dead chan 1
-bad_channels[5] = 3
-bad_channels[6] = 3
+bad_channels[0] = 3  # channel 4 has dead chan 1
+bad_channels[1] = 3
+bad_channels[3] = 3
 bad_channels[8] = 3
-bad_channels[15] = 3
+bad_channels[16] = 3
 bad_channels[17] = 3
+bad_channels[21] = 3
 
+bad_channels[4 + 24] = 3
+bad_channels[5 + 24] = 3
+bad_channels[6 + 24] = 3
+bad_channels[4 + 24] = 3
+bad_channels[8 + 24] = 3
+bad_channels[15 + 24] = 3
+bad_channels[17 + 24] = 3
+
+bad_channels[6 + 48] = 3
+bad_channels[14 + 48] = 3
+
+bad_channels[12 + 72] = 3
+bad_channels[13 + 72] = 3
+bad_channels[16 + 72] = 3
+bad_channels[17 + 72] = 3
 
 # Logging of Desync, TODO update this to include more information.
 def log_timestamp(file_path="desync.log", event="Unknown Event"):
@@ -169,7 +185,7 @@ class Import_csv:
                     if self.flash_count_per_event > 4 and self.good_events > 4:
                         print("Switching to fast flashing")
                         pccs_controller.clear_flash_done()
-                        publish_send_fast_pulse(trigger, flashing_rate, flashing_event_repeat_times - 4)
+                        publish_send_fast_pulse(trigger, flashing_rate, flashing_event_repeat_times - 5)
 
                         expected_flashing_time = int(flashing_event_repeat_times / flashing_rate)
                         acceptable_delay_time = expected_flashing_time * 2

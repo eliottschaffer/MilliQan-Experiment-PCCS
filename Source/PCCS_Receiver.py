@@ -71,10 +71,6 @@ def log_timestamp(file_path="desync.log", event="Unknown Event"):
         f.write(f"{timestamp} - {event}\n")
 
 
-# The program works using 3 different objects, A run object which is created every time runs are requested,
-# A detector object which handles the data flow to 5 Detector layer objects, each of which actually send the SPI data
-# to their respective Pico Blade. A pulse is then created by turning on and off specific sets of GPIO pins. The data is
-# imported from the CSV file that the program is run with.
 
 
 def send_pulse(trigger):
@@ -143,6 +139,43 @@ def set_length(length):
     # therefore the pulse-length
     bus.write_i2c_block_data(pot_addr, 0x00, [i2c_bit])
 
+
+
+# The DetectorLayer object is the lowest level object this code.
+# It formats all the data into frames (Described Below) and sends them to the Picos.
+
+# Thr SPI Frame Protocol.   Inspired by Websocket Protocol
+
+# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# |                          Opcode Header                        |     Byte 0, 1
+# |                    0xFF           0xF_   _ is variable        |     Examples are 0xFF - bar run. 0xFE I2C scan ...
+# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# |              Bool Pattern byte 1 (Channels 0–7)               |
+# |      1 bit per channel: MSB = ch0, LSB = ch7 (bit-packed)     |
+# |                                                               |  Byte 2 , 3
+# |              Bool Pattern byte 2 (Channels 8–15)              |  Controls where the pulse is permitted to go
+# |      1 bit per channel: MSB = ch8, LSB = ch15 (bit-packed)    |  using a controllable  8 chan buffer
+# |                                                               |  One is located on each the central and auxiliary
+# |        Example first 4 channels on, Ch 10 on, else off        |  Blade
+# |        [1 1 1 1] [0 0 0 0] | [0 0 1 0] [0 0 0 0 0]            |
+# |            F        0             2         0                 |
+# |            |f|0|                   |2|0|                      |
+# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# |                   Voltage Data: Channels 0–15                 |
+# |      Each channel = 2 bytes: High byte then Low byte          | Byte 4 - 35 (Voltage information 2 bytes each)
+# |      Total = 16 channels × 2 = 32 bytes                       | This contains a variable amount of channels
+# |      Example voltage 4000 = 0xfa0 = |0|f| |a|0|               | More on this below
+# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+
+# Currently Implemented Opcode Options (the 0xF_ byte):
+# 0xFF - Bar Detector Frame
+# 0xFE - Calls for the Pico to scan available I2C devices on each channel Voltage values ignored
+# 0xFC - Slab Detector Frame First Half - Central Blade - with upto 2 PMTs/LEDs per channel
+# 0xFD - Slab Detector Frame Second Half - Auxiliary Blade - upto 2 devices in each chan
+# 0xFB - Lightbar First half
+# 0xFA - Lightbar Second Half
+# TODO 0xF0 - Force Pico Restart
 
 class DetectorLayer:
     def __init__(self, cs_id, detector_spi):
