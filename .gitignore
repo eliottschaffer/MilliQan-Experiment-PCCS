@@ -1,2 +1,8 @@
 /Source/Base_check.py
 .idea
+Testing_OLD/generate_CSV.py
+Testing_OLD/lightbar.py
+Testing_OLD/main.py
+Testing_OLD/Pulse_test.py
+Testing_OLD/rpi5.py
+Testing_OLD/spi.py
