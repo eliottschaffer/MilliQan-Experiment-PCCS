@@ -16,14 +16,21 @@ import gpiod
 import smbus
 import json
 import threading
-import socket
 import traceback
+import argparse
 import logging
 
 HEARTBEAT_INTERVAL = 15  # seconds
-PI_ID = "PCCS_Flasher"
+
+# Command-line argument for the receiver's ID
+parser = argparse.ArgumentParser(description="Start PCCS Receiver with a specific ID")
+parser.add_argument("--id", required=True, help="ID of this receiver (e.g., PCCS_Flasher, PCCS_Sub_1)")
+args = parser.parse_args()
+
+PI_ID = args.id
+
 client_id = PI_ID
-broker_ip = "10.31.209.110" # Change the Real IP
+broker_ip = "128.141.91.10" # Change the Real IP
 
 
 FIRST_RECONNECT_DELAY = 1
@@ -218,7 +225,7 @@ class DetectorLayer:
         for i in range(8, 16):
             if bool_data[i]:
                 byte2 |= (1 << (15 - i))  # Set the bit at position (15 - i) if the boolean value is True
-
+    
         print(byte1)
         print(byte2)
         pattern_bytes.append(byte1)
@@ -251,7 +258,7 @@ class DetectorLayer:
 
     def set_data(self, chan_val):
         print("Chan Val in Set Data", chan_val)
-        bool_data = [(val != '0' and val != '') for val in chan_val]  # lets pulse go to non zero channels
+        bool_data = [(val != 0 and val != '') for val in chan_val]  # lets pulse go to non zero channels
         print("Bool Data in Set Data", bool_data)
         voltage_data = chan_val
         self.setByteData(bool_data)
@@ -508,7 +515,7 @@ def on_message(client, userdata, message):
         elif topic == TOPIC_PREP:
             bad_channel_packed = message.payload
             bad_channels = struct.unpack(">24B", bad_channel_packed)
-            bad_channels_data = list(bad_channels) + [0] * 16
+            bad_channels_data = list(bad_channels) + ['0'] * 16
             pccs_receiver.initialize(bad_channels_data)
 
         elif topic == TOPIC_DATA:
@@ -522,7 +529,7 @@ def on_message(client, userdata, message):
             else:
                 voltages = struct.unpack(">48H", data)
 
-            slab_layer_data = list(voltages) + ['0'] * 16
+            slab_layer_data = list(voltages) + [0] * 16
             pccs_receiver.set_layer(slab_layer_data)
             publish_ready_for_flash()
 
@@ -544,6 +551,7 @@ def on_message(client, userdata, message):
                 count = msg.get("count", None)
                 if rate is not None and count is not None:
                     send_fastpulse(trigger, rate, count)  # Define this function to handle fast pulses
+                    publish_flash_done()
                 else:
                     print(f"Incomplete fast pulse info: {msg}")
 

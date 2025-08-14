@@ -185,6 +185,7 @@ class Import_csv:
                     if self.flash_count_per_event > 4 and self.good_events > 4:
                         print("Switching to fast flashing")
                         pccs_controller.clear_flash_done()
+
                         publish_send_fast_pulse(trigger, flashing_rate, flashing_event_repeat_times - 5)
 
                         expected_flashing_time = int(flashing_event_repeat_times / flashing_rate)
@@ -341,7 +342,7 @@ class PCCSController:
 
     def clear_flash_done(self):
         with self.flash_lock:
-            self.flash_done.set()
+            self.flash_done.clear()
 
     # A function that checks if all the expected workers (from the handshake) are ready, checking every 0.1 seconds with a
     # variable timeout
@@ -362,11 +363,11 @@ class PCCSController:
         print(f"[wait_for_all_ready] Got ready: {ready_copy}")
         return False
 
-
     def wait_for_flashing_end(self, timeout):
         print("Fast flash timeout length = ", timeout)
+        self.flash_done.clear()  # Ensure we start waiting fresh
         start_time = time.time()
-        # Timeout mechanism to ensure that a "Fast Flash" run has time to complete before starting new things
+
         while time.time() - start_time < timeout:
             if self.flash_done.is_set():
                 self.flash_done.clear()
@@ -411,6 +412,7 @@ def on_message(client, userdata, message):
                 pccs_controller.add_ready_for_flash(sub_id)
 
             elif status == "flash_done":
+                print("Received flash done")
                 pccs_controller.set_flash_done()
 
             # A heartbeat mechanism is implemented in which the Sub PCCS send out a heartbeat every n seconds.
