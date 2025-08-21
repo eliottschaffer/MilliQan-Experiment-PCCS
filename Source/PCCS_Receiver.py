@@ -515,7 +515,7 @@ def on_message(client, userdata, message):
         elif topic == TOPIC_PREP:
             bad_channel_packed = message.payload
             bad_channels = struct.unpack(">24B", bad_channel_packed)
-            bad_channels_data = list(bad_channels) + ['0'] * 16
+            bad_channels_data = list(bad_channels) + [0] * 16
             pccs_receiver.initialize(bad_channels_data)
 
         elif topic == TOPIC_DATA:
